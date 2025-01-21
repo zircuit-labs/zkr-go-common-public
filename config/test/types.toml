@@ -1,0 +1,25 @@
+# This is a TOML document
+[default]
+title = "TOML Example"
+period = "2h15m"
+
+[default.owner]
+name = "Tom Preston-Werner"
+dob = 1979-05-27T07:32:00-08:00
+
+[default.database]
+enabled = true
+ports = [8000, 8001, 8002]
+data = [["delta", "phi"], ["kappa"]]
+temp_targets = { cpu = 79.5, case = 72.0 }
+string = "example"
+
+[default.servers]
+
+[default.servers.alpha]
+ip = "10.0.0.1"
+role = "frontend"
+
+[default.servers.beta]
+ip = "10.0.0.2"
+role = "backend"

@@ -1,0 +1,6 @@
+# Files listed here are ignored when copying via Earthly similar to .gitignore
+# For reference: https://docs.earthly.dev/docs/earthfile/earthlyignore
+
+.earthlyignore
+.gitignore
+CODEOWNERS

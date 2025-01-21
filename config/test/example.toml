@@ -1,0 +1,12 @@
+[default]
+a = "alpha"
+b = "beta"
+
+[default.c]
+x = "x-ray"
+z = "zulu"
+
+[local]
+a = "aardvark"
+b = "boar"
+c.z = "zebra"
