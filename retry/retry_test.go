@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"github.com/zircuit-labs/zkr-go-common/retry"
 	"github.com/zircuit-labs/zkr-go-common/retry/strategy"
 	"github.com/zircuit-labs/zkr-go-common/xerrors"
@@ -43,7 +44,8 @@ func (f *foo) bar() error {
 func TestRetrySemantics(t *testing.T) {
 	t.Parallel()
 
-	noWait := strategy.NewConstant(0)
+	noWait, err := strategy.NewConstant(0)
+	require.NoError(t, err)
 
 	testCases := []struct {
 		testName          string
@@ -162,11 +164,12 @@ func TestRetrySemantics(t *testing.T) {
 			t.Parallel()
 
 			// set up the retrier
-			retrier := retry.NewRetrier(
+			retrier, err := retry.NewRetrier(
 				retry.WithStrategy(noWait),
 				retry.WithMaxAttempts(tc.maxAttempts),
 				retry.WithUnknownErrorsAs(tc.unknownAs),
 			)
+			require.NoError(t, err)
 
 			// set up the test function
 			f := &foo{
@@ -175,7 +178,7 @@ func TestRetrySemantics(t *testing.T) {
 			}
 
 			// set up context
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 
 			// cancel now if testing for cancellation
@@ -184,7 +187,7 @@ func TestRetrySemantics(t *testing.T) {
 			}
 
 			// execute the retry
-			err := retrier.Try(ctx, f.bar)
+			err = retrier.Try(ctx, f.bar)
 
 			// if eventual success, then no error should be returned
 			if tc.expectedCause == retry.Success {

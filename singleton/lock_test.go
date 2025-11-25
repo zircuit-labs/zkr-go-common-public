@@ -2,21 +2,18 @@ package singleton_test
 
 import (
 	"context"
-	"log"
 	"log/slog"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/nats-io/nats.go"
-	"github.com/nats-io/nats.go/jetstream"
 	"github.com/rs/xid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"github.com/zircuit-labs/zkr-go-common/calm/errgroup"
-	"github.com/zircuit-labs/zkr-go-common/config"
 	zkrlog "github.com/zircuit-labs/zkr-go-common/log"
-	"github.com/zircuit-labs/zkr-go-common/messagebus"
+	"github.com/zircuit-labs/zkr-go-common/messagebus/testutils"
 	"github.com/zircuit-labs/zkr-go-common/singleton"
 )
 
@@ -24,47 +21,6 @@ const (
 	lockRefreshInterval  = time.Millisecond * 10
 	lockValidityInterval = time.Millisecond * 100
 )
-
-var natsServer *messagebus.NatsEmbeddedServer
-
-func TestMain(m *testing.M) {
-	cfg, err := config.NewConfigurationFromMap(
-		map[string]any{
-			"servername": "unit_test_server",
-		},
-	)
-	if err != nil {
-		log.Fatalf("failed to parse server config: %v", err)
-	}
-
-	embeddedServer, err := messagebus.NewNatsEmbeddedServer(cfg, "")
-	if err != nil {
-		log.Fatalf("failed to start nats server: %v", err)
-	}
-	natsServer = embeddedServer
-
-	// run the tests
-	code := m.Run()
-
-	natsServer.Close()
-	os.Exit(code)
-}
-
-func getNatsConnection(t *testing.T) *nats.Conn {
-	t.Helper()
-	nc, err := natsServer.NewConnection()
-	require.NoError(t, err)
-	require.NotNil(t, natsServer)
-	t.Cleanup(nc.Close)
-	return nc
-}
-
-func getJetStream(t *testing.T, nc *nats.Conn) jetstream.JetStream {
-	t.Helper()
-	js, err := jetstream.New(nc)
-	require.NoError(t, err)
-	return js
-}
 
 func createLockFactory[T any](t *testing.T, nc *nats.Conn, logger *slog.Logger) *singleton.LockFactory[T] {
 	t.Helper()
@@ -80,18 +36,18 @@ func createLockFactory[T any](t *testing.T, nc *nats.Conn, logger *slog.Logger) 
 	return lockFactory
 }
 
-func TestLockLost(t *testing.T) {
-	t.Parallel()
-
-	nc := getNatsConnection(t)
-	require.NotNil(t, nc)
+func TestLockLost(t *testing.T) { //nolint:paralleltest // parallel exposes a data race in the nats server code itself, but does not affect the validity of this test/code.
+	natsServer := testutils.NewEmbeddedServer(t)
+	t.Cleanup(natsServer.Close)
+	nc, js := natsServer.Conn(t)
+	t.Cleanup(nc.Close)
 
 	// create the lock factory
 	logger := zkrlog.NewTestLogger(t)
 	lockFactory := createLockFactory[any](t, nc, logger)
 
 	// acquire the lock
-	ctx := context.Background()
+	ctx := t.Context()
 	lock, err := lockFactory.CreateLock(ctx, t.Name(), nil)
 	require.NoError(t, err)
 	require.True(t, lock.Locked())
@@ -103,7 +59,6 @@ func TestLockLost(t *testing.T) {
 	})
 
 	// Outside of the lock context, delete the lock value causing the lock to be lost
-	js := getJetStream(t, nc)
 	kv, err := js.KeyValue(ctx, singleton.BucketName)
 	require.NoError(t, err)
 	err = kv.Delete(ctx, t.Name())
@@ -116,18 +71,18 @@ func TestLockLost(t *testing.T) {
 	assert.False(t, lock.Locked())
 }
 
-func TestLockLostConnection(t *testing.T) {
-	t.Parallel()
-
-	nc := getNatsConnection(t)
-	require.NotNil(t, nc)
+func TestLockLostConnection(t *testing.T) { //nolint:paralleltest // parallel exposes a data race in the nats server code itself, but does not affect the validity of this test/code.
+	natsServer := testutils.NewEmbeddedServer(t)
+	t.Cleanup(natsServer.Close)
+	nc, _ := natsServer.Conn(t)
+	t.Cleanup(nc.Close)
 
 	// create the lock factory
 	logger := zkrlog.NewTestLogger(t)
 	lockFactory := createLockFactory[any](t, nc, logger)
 
 	// acquire the lock
-	ctx := context.Background()
+	ctx := t.Context()
 	lock, err := lockFactory.CreateLock(ctx, t.Name(), nil)
 	require.NoError(t, err)
 	require.True(t, lock.Locked())
@@ -148,18 +103,18 @@ func TestLockLostConnection(t *testing.T) {
 	assert.False(t, lock.Locked())
 }
 
-func TestRun(t *testing.T) {
-	t.Parallel()
-
-	nc := getNatsConnection(t)
-	require.NotNil(t, nc)
+func TestRun(t *testing.T) { //nolint:paralleltest // parallel exposes a data race in the nats server code itself, but does not affect the validity of this test/code.
+	natsServer := testutils.NewEmbeddedServer(t)
+	t.Cleanup(natsServer.Close)
+	nc, _ := natsServer.Conn(t)
+	t.Cleanup(nc.Close)
 
 	// create the lock factory
 	logger := zkrlog.NewTestLogger(t)
 	lockFactory := createLockFactory[any](t, nc, logger)
 
 	// acquire the lock
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	t.Cleanup(cancel)
 	lock, err := lockFactory.CreateLock(ctx, t.Name(), nil)
 	require.NoError(t, err)
@@ -183,18 +138,18 @@ func TestRun(t *testing.T) {
 	assert.False(t, lock.Locked())
 }
 
-func TestTryCreateLock(t *testing.T) {
-	t.Parallel()
-
-	nc := getNatsConnection(t)
-	require.NotNil(t, nc)
+func TestTryCreateLock(t *testing.T) { //nolint:paralleltest // parallel exposes a data race in the nats server code itself, but does not affect the validity of this test/code.
+	natsServer := testutils.NewEmbeddedServer(t)
+	t.Cleanup(natsServer.Close)
+	nc, _ := natsServer.Conn(t)
+	t.Cleanup(nc.Close)
 
 	// create the lock factory
 	logger := zkrlog.NewTestLogger(t)
 	lockFactory := createLockFactory[string](t, nc, logger)
 
 	// acquire the lock
-	ctx := context.Background()
+	ctx := t.Context()
 	lockA, err := lockFactory.CreateLock(ctx, t.Name(), "lockA content")
 	require.NoError(t, err)
 	require.True(t, lockA.Locked())
@@ -272,11 +227,10 @@ var (
 // Each of the instanceCount go routines will write to a channel which sets a value
 // in an array equal to the instance number. Without locks, we expect the array
 // at the end to be filled with different numbers (ie not all the same).
-func TestCanary(t *testing.T) {
-	t.Parallel()
+func TestCanary(t *testing.T) { //nolint:paralleltest // parallel exposes a data race in the nats server code itself, but does not affect the validity of this test/code.
 	// Don't regularly run this test:
 	// it only exists to prove non-deterministic behavior can happen without careful locking.
-	t.Skip("This test is non-deterministic and may fail - intentianlly disabled")
+	t.Skip("This test is intentionally disabled as it is only a proof-of-need")
 
 	ch := make(chan ab)
 	out := make(chan []int)
@@ -299,14 +253,14 @@ func TestCanary(t *testing.T) {
 // TestLock takes the same setup as TestCanary but adds the singleton lock
 // to each goroutine. The end result is still non-deterministic, but
 // we expect each value in the array to no be identical.
-func TestLock(t *testing.T) {
-	t.Parallel()
-
+func TestLock(t *testing.T) { //nolint:paralleltest // parallel exposes a data race in the nats server code itself, but does not affect the validity of this test/code.
 	ch := make(chan ab)
 	out := make(chan []int)
 
-	nc := getNatsConnection(t)
-	require.NotNil(t, nc)
+	natsServer := testutils.NewEmbeddedServer(t)
+	t.Cleanup(natsServer.Close)
+	nc, _ := natsServer.Conn(t)
+	t.Cleanup(nc.Close)
 
 	// create all the locks first
 	logger := zkrlog.NewTestLogger(t)
@@ -325,7 +279,7 @@ func TestLock(t *testing.T) {
 		// Do all this inside a goroutine so each has a chance of
 		// getting the lock first.
 		eg.Go(func() error {
-			lock, err := lockFactories[i].CreateLock(context.Background(), t.Name(), "test")
+			lock, err := lockFactories[i].CreateLock(t.Context(), t.Name(), "test")
 			if err != nil {
 				return err
 			}
@@ -335,7 +289,7 @@ func TestLock(t *testing.T) {
 				return locks[i].Unlock()
 			})
 			eg.Go(func() error {
-				return locks[i].Run(context.Background())
+				return locks[i].Run(t.Context())
 			})
 			return nil
 		})

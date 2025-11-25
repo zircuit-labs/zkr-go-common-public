@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/zircuit-labs/zkr-go-common/retry/jitter"
+	"github.com/zircuit-labs/zkr-go-common/xerrors/stacktrace"
 )
 
 // Linear strategy increases the delay the same amount every iteration (with optional jitter).
@@ -15,7 +16,11 @@ type Linear struct {
 }
 
 // NewLinear creates a new linear delay strategy factory.
-func NewLinear(initialDelay, maxDelay time.Duration, opts ...Option) Factory {
+func NewLinear(initialDelay, maxDelay time.Duration, opts ...Option) (Factory, error) {
+	if initialDelay <= 0 {
+		return nil, stacktrace.Wrap(ErrInvalidInitialDelay)
+	}
+
 	// Set up default options
 	options := options{
 		jitterFunc: jitter.Full(), // full jitter by default
@@ -32,7 +37,7 @@ func NewLinear(initialDelay, maxDelay time.Duration, opts ...Option) Factory {
 			maxDelay:     maxDelay,
 			jitterFunc:   options.jitterFunc,
 		}
-	}
+	}, nil
 }
 
 // NextDelay returns the next delay time.

@@ -77,7 +77,7 @@ func (t *Task) Run(ctx context.Context) error {
 	select {
 	case sig := <-t.sigCh:
 		_ = sig
-		// Log this as an error, even though it is expected in many cases
+		// Log this as an error, even though it is expected in many cases.
 		// The reason being that it could help to detect issues much sooner in cases where
 		// the OS has signaled a service to stop in the unexpected case.
 		// While this may result in false-positive alerts, that is preferred over missing

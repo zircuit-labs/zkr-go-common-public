@@ -7,8 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/golang/mock/gomock"
 	"github.com/labstack/echo/v4"
+	"go.uber.org/mock/gomock"
 )
 
 func TestGetHealthCheck_Handle(t *testing.T) {

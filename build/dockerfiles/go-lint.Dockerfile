@@ -1,0 +1,6 @@
+FROM parent:latest
+
+ARG LINT_COMMAND
+
+WORKDIR /src/
+RUN ${LINT_COMMAND}

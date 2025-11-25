@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/zircuit-labs/zkr-go-common/retry/jitter"
+	"github.com/zircuit-labs/zkr-go-common/xerrors/stacktrace"
 )
 
 // Exponential strategy increases the delay amount by multiplying with a configurable base every iteration (with optional jitter).
@@ -17,7 +18,11 @@ type Exponential struct {
 }
 
 // NewExponential creates a new exponential delay strategy.
-func NewExponential(initialDelay, maxDelay time.Duration, opts ...Option) Factory {
+func NewExponential(initialDelay, maxDelay time.Duration, opts ...Option) (Factory, error) {
+	if initialDelay <= 0 {
+		return nil, stacktrace.Wrap(ErrInvalidInitialDelay)
+	}
+
 	// Set up default options
 	options := options{
 		jitterFunc: jitter.Full(), // full jitter by default
@@ -36,7 +41,7 @@ func NewExponential(initialDelay, maxDelay time.Duration, opts ...Option) Factor
 			jitterFunc:   options.jitterFunc,
 			base:         options.base,
 		}
-	}
+	}, nil
 }
 
 // NextDelay returns the next delay time.

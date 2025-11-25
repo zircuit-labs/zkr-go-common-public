@@ -61,7 +61,19 @@ func (tm *Manager) Run(tasks ...Task) {
 
 		// Note: calm/errgroup will recover
 		// a panic as an error, so we don't need to
-		tm.group.Go(tm.runTask(t))
+		tm.group.Go(tm.runTask(t, true))
+	}
+}
+
+// Run immediately starts all of the given tasks. These tasks are expected to
+// to terminate without error, while others continue running.
+func (tm *Manager) RunTerminable(tasks ...Task) {
+	for _, task := range tasks {
+		t := task // local for closure
+
+		// Note: calm/errgroup will recover
+		// a panic as an error, so we don't need to
+		tm.group.Go(tm.runTask(t, false))
 	}
 }
 
@@ -89,16 +101,19 @@ func (tm *Manager) Stop() error {
 	return tm.Wait()
 }
 
-func (tm *Manager) runTask(t Task) func() error {
+func (tm *Manager) runTask(t Task, terminateAll bool) func() error {
 	return func() error {
-		// when any task completes regardless of why, cancel the context
-		// so that other tasks know they should also stop
-		defer tm.cancel()
-
 		tm.logger.Info("task starting", slog.String("task", t.Name()))
 		if err := t.Run(tm.ctx); err != nil {
 			tm.logger.Error("task failed", slog.String("task", t.Name()), log.ErrAttr(err))
+			tm.cancel()
 			return err
+		}
+
+		if terminateAll {
+			// when the task completes, regardless of why, cancel the context
+			// so that other tasks know they should also stop
+			defer tm.cancel()
 		}
 
 		tm.logger.Info("task stopped", slog.String("task", t.Name()))

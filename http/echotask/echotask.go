@@ -10,10 +10,10 @@ import (
 	"os"
 	"time"
 
+	ddtrace "github.com/DataDog/dd-trace-go/contrib/labstack/echo.v4/v2"
 	"github.com/labstack/echo-contrib/echoprometheus"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	ddtrace "gopkg.in/DataDog/dd-trace-go.v1/contrib/labstack/echo.v4"
 
 	"github.com/zircuit-labs/zkr-go-common/calm/errgroup"
 	"github.com/zircuit-labs/zkr-go-common/config"
@@ -21,6 +21,7 @@ import (
 	"github.com/zircuit-labs/zkr-go-common/http/echotask/healthcheck"
 	"github.com/zircuit-labs/zkr-go-common/http/port"
 	"github.com/zircuit-labs/zkr-go-common/log"
+	"github.com/zircuit-labs/zkr-go-common/log/identity"
 	"github.com/zircuit-labs/zkr-go-common/xerrors/stacktrace"
 )
 
@@ -49,7 +50,6 @@ type RouteRegistration interface {
 
 type echoServerConfig struct {
 	Port               int
-	TLS                bool
 	DisableCompression bool `koanf:"nogzip"`
 	Prometheus         string
 }
@@ -113,6 +113,13 @@ func WithMemoryCache(maxItems int, ttl time.Duration) Option {
 	}
 }
 
+// WithMiddleware adds a middleware to be served.
+func WithMiddleware(middleware echo.MiddlewareFunc) Option {
+	return func(options *options) {
+		options.middlewares = append(options.middlewares, middleware)
+	}
+}
+
 // Server is an HTTP(S) server using the echo framework.
 type Server struct {
 	e       *echo.Echo
@@ -153,18 +160,17 @@ func NewServer(cfg *config.Configuration, cfgPath string, opts ...Option) (*Serv
 		}
 	}
 
-	if serverConfig.TLS {
-		// TODO Support TLS
-		panic("tls support not yet implemented")
-	}
-
 	// create the echo server
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
 	// include DataDog trace middleware if the env var is set
 	if _, ok := os.LookupEnv("DD_APM_ENABLED"); ok {
-		e.Use(ddtrace.Middleware(ddtrace.WithServiceName(log.WhoAmI().ServiceName)))
+		name, id := identity.WhoAmI()
+		e.Use(ddtrace.Middleware(
+			ddtrace.WithService(name),
+			ddtrace.WithCustomTag("instance", id),
+		))
 	}
 	e.Use(middleware.CORS())
 	e.Use(Recover(options.logger))
@@ -182,7 +188,12 @@ func NewServer(cfg *config.Configuration, cfgPath string, opts ...Option) (*Serv
 
 	if serverConfig.Prometheus != "" {
 		e.Use(echoprometheus.NewMiddlewareWithConfig(echoprometheus.MiddlewareConfig{
-			Subsystem:                 serverConfig.Prometheus,
+			Subsystem: serverConfig.Prometheus,
+			LabelFuncs: map[string]echoprometheus.LabelValueFunc{
+				"host": func(_ echo.Context, _ error) string {
+					return ""
+				},
+			},
 			DoNotUseRequestPathFor404: true,
 		}))
 		e.GET(metricsRoute, echoprometheus.NewHandler()) // register route for getting gathered metrics

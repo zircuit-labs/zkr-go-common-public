@@ -1,0 +1,6 @@
+{
+    "content": "Hello World!",
+    "timestamp": "2025-01-02T03:04:05Z",
+    "int_value": 42,
+    "array_value": [1, 2, 3]
+}

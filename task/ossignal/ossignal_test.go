@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"github.com/zircuit-labs/zkr-go-common/task/ossignal"
 )
 
@@ -17,6 +18,7 @@ const (
 
 func TestSignal(t *testing.T) {
 	t.Parallel()
+	// Note: Cannot use synctest.Test here because this uses OS signals
 
 	// use a signal that won't cause issues with testing
 	task := ossignal.NewTask(ossignal.WithSignals(syscall.SIGCONT))
@@ -25,20 +27,21 @@ func TestSignal(t *testing.T) {
 	// start the task (which blocks) and capture any resulting error in a channel
 	errCh := make(chan error)
 	go func() {
-		ctx := context.Background()
+		ctx := t.Context()
 		err := task.Run(ctx)
 		errCh <- err
 	}()
 
 	timer := time.NewTimer(waitTime)
-	defer timer.Stop()
+	t.Cleanup(func() {
+		timer.Stop()
+	})
 
 	// waiting around for a while, the task should not exit
 	select {
 	case err := <-errCh:
 		require.NoError(t, err)
 	case <-timer.C:
-		break
 	}
 
 	// send the expected signal, the task should now stop
@@ -57,31 +60,35 @@ func TestSignal(t *testing.T) {
 
 func TestContext(t *testing.T) {
 	t.Parallel()
+	// Note: Cannot use synctest.Test here because this uses OS signals
 
 	// use a different signal from the other test
 	task := ossignal.NewTask(ossignal.WithSignals(syscall.SIGIO))
 	assert.Equal(t, "os signal task", task.Name())
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
 
 	// start the task (which blocks) and capture any resulting error in a channel
 	errCh := make(chan error)
-	defer close(errCh)
+	t.Cleanup(func() {
+		close(errCh)
+	})
 	go func() {
 		err := task.Run(ctx)
 		errCh <- err
 	}()
 
 	timer := time.NewTimer(waitTime)
-	defer timer.Stop()
+	t.Cleanup(func() {
+		timer.Stop()
+	})
 
 	// waiting around for a while, the task should not exit
 	select {
 	case err := <-errCh:
 		require.NoError(t, err)
 	case <-timer.C:
-		break
 	}
 
 	// cancel the context, the task should now stop

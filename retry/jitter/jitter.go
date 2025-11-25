@@ -24,7 +24,13 @@ func None() Transformation {
 //
 // Inspired by https://www.awsarchitectureblog.com/2015/03/backoff.html
 func Full() Transformation {
-	return rand.N[time.Duration]
+	return func(duration time.Duration) time.Duration {
+		// Panic prevention
+		if duration <= 0 {
+			return 0
+		}
+		return rand.N(duration)
+	}
 }
 
 // Equal creates a Transformation that transforms a duration into a result
@@ -33,6 +39,10 @@ func Full() Transformation {
 // Inspired by https://www.awsarchitectureblog.com/2015/03/backoff.html
 func Equal() Transformation {
 	return func(duration time.Duration) time.Duration {
+		// Panic prevention
+		if duration <= 0 {
+			return 0
+		}
 		return (duration / 2) + (rand.N(duration) / 2)
 	}
 }

@@ -140,8 +140,7 @@ func (f *LockFactory[T]) TryCreateLock(ctx context.Context, key string, content 
 			lock.opts.logger.Info("lock acquired", slog.Uint64("rev", rev))
 			lock.rev = rev
 			lock.locked = true
-			lock.wg.Add(1)
-			go lock.continuallyRefresh()
+			lock.wg.Go(lock.continuallyRefresh)
 			return lock, nil, nil
 		}
 
@@ -201,8 +200,7 @@ func (f *LockFactory[T]) CreateLock(ctx context.Context, key string, content T) 
 			lock.opts.logger.Info("lock acquired", slog.Uint64("rev", rev))
 			lock.rev = rev
 			lock.locked = true
-			lock.wg.Add(1)
-			go lock.continuallyRefresh()
+			lock.wg.Go(lock.continuallyRefresh)
 			return lock, nil
 		}
 
@@ -296,7 +294,6 @@ type Lock[T any] struct {
 
 // Refresh the lock expiry on a regular interval.
 func (l *Lock[T]) continuallyRefresh() {
-	defer l.wg.Done()
 	ticker := time.NewTicker(l.opts.lockRefreshInterval)
 	defer ticker.Stop()
 

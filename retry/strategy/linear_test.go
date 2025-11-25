@@ -1,6 +1,7 @@
 package strategy_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ func TestLinear(t *testing.T) {
 		initialDelay         int
 		maxDelay             int
 		expectedOutputDelays []int
+		expectedError        error
 	}{
 		{
 			testName:             "one second, max four",
@@ -28,6 +30,16 @@ func TestLinear(t *testing.T) {
 			maxDelay:             11,
 			expectedOutputDelays: []int{2, 4, 6, 8, 10, 11, 11, 11, 11},
 		},
+		{
+			testName:      "zero seconds",
+			initialDelay:  0,
+			expectedError: strategy.ErrInvalidInitialDelay,
+		},
+		{
+			testName:      "negative seconds",
+			initialDelay:  -100,
+			expectedError: strategy.ErrInvalidInitialDelay,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -37,10 +49,18 @@ func TestLinear(t *testing.T) {
 			// NewConstant creates a factory
 			initial := time.Duration(tc.initialDelay) * time.Second
 			mx := time.Duration(tc.maxDelay) * time.Second
-			factory := strategy.NewLinear(initial, mx, strategy.WithoutJitter())
+			factory, err := strategy.NewLinear(initial, mx, strategy.WithoutJitter())
+			if tc.expectedError != nil {
+				if err == nil || !errors.Is(err, tc.expectedError) {
+					t.Fatalf("expected error of type: %v, got %v", tc.expectedError, err)
+				}
+				return
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
 			// ensure the factory produces the same strategy by doing the test multiple times
-			for i := 0; i < 3; i++ {
+			for range 3 {
 				s := factory()
 
 				// verify the pattern of the delay values

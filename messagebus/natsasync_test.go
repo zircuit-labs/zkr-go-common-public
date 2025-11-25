@@ -9,6 +9,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"github.com/zircuit-labs/zkr-go-common/calm/errgroup"
 	"github.com/zircuit-labs/zkr-go-common/config"
 	"github.com/zircuit-labs/zkr-go-common/log"
@@ -65,7 +66,7 @@ func TestNatsStreamAsync(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(producer.Close)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	for _, m := range sampleMessages {
 		err := producer.Produce(ctx, m)
 		assert.NoError(t, err)
@@ -90,7 +91,7 @@ func TestNatsStreamAsync(t *testing.T) {
 	assert.NoError(t, err)
 
 	// run the consumer in the background
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second*10)
 	t.Cleanup(cancel)
 	group, _ := errgroup.WithContext(ctx)
 	group.Go(func() error {
@@ -146,7 +147,7 @@ func TestPublisherWithSubjectTransform(t *testing.T) {
 		return fmt.Sprintf("%s.%d", defaultSubject, data.Integer)
 	})
 
-	ctx := context.Background()
+	ctx := t.Context()
 	for _, m := range sampleMessages {
 		err := producer.Produce(ctx, m)
 		assert.NoError(t, err)
@@ -174,7 +175,7 @@ func TestPublisherWithSubjectTransform(t *testing.T) {
 	assert.NoError(t, err)
 
 	// run the consumer in the background
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second*10)
 	t.Cleanup(cancel)
 	group, _ := errgroup.WithContext(ctx)
 	group.Go(func() error {
@@ -259,7 +260,7 @@ func TestConsumerSubjectTransform(t *testing.T) {
 	})
 
 	// produce the messages
-	ctx := context.Background()
+	ctx := t.Context()
 	for _, m := range messages {
 		err := producer.Produce(ctx, m)
 		require.NoError(t, err)
@@ -294,7 +295,7 @@ func TestConsumerSubjectTransform(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second*10)
 	t.Cleanup(cancel)
 	group, _ := errgroup.WithContext(ctx)
 
@@ -372,7 +373,7 @@ func TestNatsGetLastMessage(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(producer.Close)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	err = producer.Produce(ctx, sampleMessages[0])
 	assert.NoError(t, err)
 
@@ -452,7 +453,7 @@ func TestJSONDecoder(t *testing.T) {
 	js := getJetStream(t, nc)
 
 	// Push raw json directly into NATS
-	_, err := js.Publish(context.Background(), "baz", encodedMessage)
+	_, err := js.Publish(t.Context(), "baz", encodedMessage)
 	require.NoError(t, err)
 
 	cfg, err := config.NewConfigurationFromMap(
@@ -475,7 +476,7 @@ func TestJSONDecoder(t *testing.T) {
 	assert.NoError(t, err)
 
 	// run the consumer in the background
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second*10)
 	t.Cleanup(cancel)
 	group, _ := errgroup.WithContext(ctx)
 	group.Go(func() error {

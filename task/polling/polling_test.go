@@ -4,38 +4,16 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"github.com/zircuit-labs/zkr-go-common/task/polling"
 )
 
-const (
-	waitTime = time.Millisecond * 50
-)
-
 var errTest = errors.New("example error")
-
-type fakeTicker struct {
-	Ch chan time.Time
-}
-
-func (t *fakeTicker) Stop() {
-	close(t.Ch)
-}
-
-func (t *fakeTicker) Chan() <-chan time.Time {
-	return t.Ch
-}
-
-func (t *fakeTicker) Tick() {
-	t.Ch <- time.Now()
-}
-
-func newFakeTicker() polling.Ticker {
-	return &fakeTicker{Ch: make(chan time.Time)}
-}
 
 type testAction struct {
 	Err           error
@@ -103,66 +81,53 @@ func TestPollingTask(t *testing.T) {
 		t.Run(tc.testName, func(t *testing.T) {
 			t.Parallel()
 
-			ticker := newFakeTicker()
-			action := testAction{Err: tc.actionErr}
-			options := []polling.Option{
-				polling.WithTestTicker(ticker),
-			}
-			if tc.runAtStart {
-				options = append(options, polling.WithRunAtStart())
-			}
+			synctest.Test(t, func(t *testing.T) {
+				action := testAction{Err: tc.actionErr}
+				// Use a real ticker with a 100ms interval
+				pollInterval := 100 * time.Millisecond
+				options := []polling.Option{
+					polling.WithInterval(pollInterval),
+				}
+				if tc.runAtStart {
+					options = append(options, polling.WithRunAtStart())
+				}
 
-			task := polling.NewTask(tc.testName, &action, options...)
-			ctx, cancel := context.WithCancel(context.Background())
+				task := polling.NewTask(tc.testName, &action, options...)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
 
-			// start the task (which blocks) and capture any resulting error in a channel
-			errCh := make(chan error)
-			defer close(errCh)
-			go func() {
-				err := task.Run(ctx)
-				errCh <- err
-			}()
+				// start the task (which blocks) and capture any resulting error in a channel
+				errCh := make(chan error)
+				go func() {
+					err := task.Run(ctx)
+					errCh <- err
+				}()
 
-			// cause the fake ticker to "fire" the required number of times
-			for i := 0; i < tc.numTicks; i++ {
-				ticker.Tick()
-			}
+				// Sleep to let the task run for the expected number of ticks
+				// Each tick is 100ms, so we sleep for numTicks * 100ms + a small buffer
+				sleepDuration := time.Duration(tc.numTicks)*pollInterval + 50*time.Millisecond
+				time.Sleep(sleepDuration)
 
-			// use a real clock for a small delay to ensure
-			// context switch allowing task to actually run
-			timer := time.NewTimer(waitTime)
-			defer timer.Stop()
+				// verify that the cleanup action has not yet been called
+				assert.False(t, action.CleanupCalled)
 
-			// waiting around for a while, the task should not exit
-			// since in this test the task doesn't terminate on error
-			select {
-			case err := <-errCh:
+				// cancel the context, the task should now stop
 				cancel()
-				require.NoError(t, err)
-			case <-timer.C:
-				break
-			}
 
-			// verify that the cleanup action has not yet been called
-			assert.False(t, action.CleanupCalled)
+				// Wait for the task to complete
+				select {
+				case err := <-errCh:
+					require.NoError(t, err)
+				case <-time.After(100 * time.Millisecond):
+					t.Fatal("task failed to stop when context was cancelled")
+				}
 
-			// cancel the context, the task should now stop
-			cancel()
+				// check the action was run the expected number of times
+				assert.Equal(t, tc.expectedCallCount, action.CallCount)
 
-			// verify that the task stops (wait a max amount of time for this)
-			timer.Reset(waitTime)
-			select {
-			case err := <-errCh:
-				require.NoError(t, err)
-			case <-timer.C:
-				t.Fatal("task failed to stop when context was cancelled")
-			}
-
-			// check the action was run the expected number of times
-			assert.Equal(t, tc.expectedCallCount, action.CallCount)
-
-			// verify that the cleanup action was called
-			assert.True(t, action.CleanupCalled)
+				// verify that the cleanup action was called
+				assert.True(t, action.CleanupCalled)
+			})
 		})
 	}
 }
@@ -173,19 +138,16 @@ func TestPollingTaskTerminateOnError(t *testing.T) {
 	testCases := []struct {
 		testName          string
 		runAtStart        bool
-		numTicks          int
 		expectedCallCount int32
 	}{
 		{
 			testName:          "error on startup",
 			runAtStart:        true,
-			numTicks:          2,
 			expectedCallCount: 1,
 		},
 		{
 			testName:          "error on first poll",
 			runAtStart:        false,
-			numTicks:          2,
 			expectedCallCount: 1,
 		},
 	}
@@ -194,52 +156,46 @@ func TestPollingTaskTerminateOnError(t *testing.T) {
 		t.Run(tc.testName, func(t *testing.T) {
 			t.Parallel()
 
-			ticker := newFakeTicker()
-			action := testAction{Err: errTest}
-			options := []polling.Option{
-				polling.WithTestTicker(ticker),
-				polling.WithTerminateOnError(),
-			}
-			if tc.runAtStart {
-				options = append(options, polling.WithRunAtStart())
-			}
+			synctest.Test(t, func(t *testing.T) {
+				action := testAction{Err: errTest}
+				pollInterval := 100 * time.Millisecond
+				options := []polling.Option{
+					polling.WithInterval(pollInterval),
+					polling.WithTerminateOnError(),
+				}
+				if tc.runAtStart {
+					options = append(options, polling.WithRunAtStart())
+				}
 
-			task := polling.NewTask(tc.testName, &action, options...)
-			ctx := context.Background()
+				task := polling.NewTask(tc.testName, &action, options...)
+				ctx := t.Context()
 
-			// start the task (which blocks) and capture any resulting error in a channel
-			errCh := make(chan error)
-			defer close(errCh)
-			go func() {
-				err := task.Run(ctx)
-				errCh <- err
-			}()
+				// start the task (which blocks) and capture any resulting error in a channel
+				errCh := make(chan error)
+				go func() {
+					err := task.Run(ctx)
+					errCh <- err
+				}()
 
-			// use a real clock for a small delay to ensure
-			// context switch allowing task to actually run
-			timer := time.NewTimer(waitTime)
-			defer timer.Stop()
+				// If not running at start, we need to wait for the first tick
+				if !tc.runAtStart {
+					time.Sleep(pollInterval + 10*time.Millisecond)
+				}
 
-			// advance the fake ticker only if we don't run at start
-			if !tc.runAtStart {
-				ticker.Tick()
-			}
+				// The task should exit when the polling action is first run
+				select {
+				case err := <-errCh:
+					assert.ErrorIs(t, err, errTest)
+				case <-time.After(200 * time.Millisecond):
+					t.Fatal("task should have exited with error")
+				}
 
-			// waiting around for a while, the task should exit when
-			// the polling action is first run
-			select {
-			case err := <-errCh:
-				assert.ErrorIs(t, err, errTest)
-			case <-timer.C:
-				t.Log("task should have exited with error")
-				t.Fail()
-			}
+				// check the action was run the expected number of times
+				assert.Equal(t, tc.expectedCallCount, action.CallCount)
 
-			// check the action was run the expected number of times
-			assert.Equal(t, tc.expectedCallCount, action.CallCount)
-
-			// verify that the cleanup action was called
-			assert.True(t, action.CleanupCalled)
+				// verify that the cleanup action was called
+				assert.True(t, action.CleanupCalled)
+			})
 		})
 	}
 }

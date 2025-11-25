@@ -2,6 +2,8 @@
 package errclass
 
 import (
+	"log/slog"
+
 	"github.com/zircuit-labs/zkr-go-common/xerrors"
 )
 
@@ -39,6 +41,14 @@ func (c Class) String() string {
 	}
 }
 
+// LogValue implements slog.LogValuer for Class.
+// It returns the class in a structured format.
+func (c Class) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("class", c.String()),
+	)
+}
+
 // WrapAs extends an error with the given class data.
 func WrapAs(err error, class Class) error {
 	if err == nil {
@@ -48,20 +58,51 @@ func WrapAs(err error, class Class) error {
 }
 
 // GetClass extracts the Class from an error.
+// If the error directly has a class (e.g., from WrapAs), that class is returned.
+// Otherwise, for joined errors, it recursively checks direct children and returns
+// the maximum class found. This preserves hierarchical override semantics where
+// explicitly wrapped joined errors take precedence over their contents.
 func GetClass(err error) Class {
 	if err == nil {
 		return Nil
 	}
 
-	maxClass := Nil
-	joinedErrs := xerrors.Unjoin(err)
-	for _, joinedErr := range joinedErrs {
-		class, ok := xerrors.Extract[Class](joinedErr)
-		if ok && class > maxClass {
-			maxClass = class
-		} else if !ok && maxClass < Unknown {
-			maxClass = Unknown
-		}
+	// Check if this error is DIRECTLY an ExtendedError with a Class
+	// (not using Extract which would traverse into joined children)
+	if extended, ok := err.(xerrors.ExtendedError[Class]); ok { //nolint:errorlint // intentionally not using errors.As
+		return extended.Data
 	}
-	return maxClass
+
+	// Check if this is a joined error
+	// A joined error implements Unwrap() []error
+	type multiError interface {
+		Unwrap() []error
+	}
+
+	if _, isJoined := err.(multiError); isJoined {
+		// For joined errors, recursively check each child
+		directChildren := xerrors.Unjoin(err)
+		maxClass := Nil
+		for _, child := range directChildren {
+			childClass := GetClass(child)
+			if childClass > maxClass {
+				maxClass = childClass
+			}
+		}
+
+		// If still no class found, return Unknown
+		if maxClass == Nil {
+			return Unknown
+		}
+
+		return maxClass
+	}
+
+	// Not a joined error and not directly ExtendedError[Class]
+	// Use Extract to find class in the error chain
+	if class, ok := xerrors.Extract[Class](err); ok {
+		return class
+	}
+
+	return Unknown
 }

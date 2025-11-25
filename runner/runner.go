@@ -8,9 +8,13 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/DataDog/dd-trace-go/v2/ddtrace/tracer"
+	"github.com/DataDog/dd-trace-go/v2/profiler"
+
 	"github.com/zircuit-labs/zkr-go-common/calm"
 	"github.com/zircuit-labs/zkr-go-common/config"
 	"github.com/zircuit-labs/zkr-go-common/log"
+	"github.com/zircuit-labs/zkr-go-common/log/identity"
 	"github.com/zircuit-labs/zkr-go-common/messagebus"
 	"github.com/zircuit-labs/zkr-go-common/singleton"
 	"github.com/zircuit-labs/zkr-go-common/task"
@@ -18,8 +22,6 @@ import (
 	"github.com/zircuit-labs/zkr-go-common/version"
 	"github.com/zircuit-labs/zkr-go-common/xerrors/errclass"
 	"github.com/zircuit-labs/zkr-go-common/xerrors/stacktrace"
-	"gopkg.in/DataDog/dd-trace-go.v1/ddtrace/tracer"
-	"gopkg.in/DataDog/dd-trace-go.v1/profiler"
 )
 
 const (
@@ -54,6 +56,7 @@ func UseProvidedName() Option {
 // Runner limits task manager interface.
 type Runner interface {
 	Run(tasks ...task.Task)
+	RunTerminable(tasks ...task.Task)
 	Cleanup(f func())
 	Context() context.Context
 }
@@ -74,13 +77,23 @@ func Run(serviceName string, f fs.FS, run Runnable, opts ...Option) {
 	if !ok || options.useProvidedName {
 		name = serviceName
 	}
+	identity.SetServiceName(name)
+	n, id := identity.WhoAmI()
 
 	// create logger
-	logger := log.NewLogger(name)
+	logger, err := log.NewLogger(
+		log.WithServiceName(n),
+		log.WithInstanceID(id),
+		log.WithVersion(&version.Info),
+	)
+	if err != nil {
+		fmt.Printf("failed to create logger: %s\n", err)
+		os.Exit(exitError) //revive:disable:deep-exit // intentional
+	}
 
 	// execute the core run logic protected from direct panics.
 	// NOTE: goroutines spawned by `run` must be themselves protected.
-	err := calm.Unpanic(func() error {
+	err = calm.Unpanic(func() error {
 		return protectedRun(f, run, logger, options)
 	})
 
@@ -97,14 +110,14 @@ func Run(serviceName string, f fs.FS, run Runnable, opts ...Option) {
 }
 
 func protectedRun(f fs.FS, run Runnable, logger *slog.Logger, opts options) error {
+	name, id := identity.WhoAmI()
 	// start the DataDog profiler and tracer if the env var is set
 	if _, ok := os.LookupEnv("DD_APM_ENABLED"); ok {
-		identity := log.WhoAmI()
 		err := profiler.Start(
-			profiler.WithService(identity.ServiceName),
+			profiler.WithService(name),
 			profiler.WithVersion(version.Info.Version),
 			profiler.WithTags(
-				fmt.Sprintf("instance:%s", identity.InstanceID),
+				fmt.Sprintf("instance:%s", id),
 				fmt.Sprintf("git_commit:%s", version.Info.GitCommit),
 			),
 			profiler.WithProfileTypes(
@@ -122,10 +135,14 @@ func protectedRun(f fs.FS, run Runnable, logger *slog.Logger, opts options) erro
 		}
 		defer profiler.Stop()
 
-		tracer.Start(
-			tracer.WithService(identity.ServiceName),
+		err = tracer.Start(
+			tracer.WithService(name),
 			tracer.WithServiceVersion(version.Info.Version),
 		)
+		if err != nil {
+			logger.Error("failed to start datadog tracer", log.ErrAttr(err))
+			return stacktrace.Wrap(err)
+		}
 		defer tracer.Stop()
 	}
 
@@ -158,10 +175,9 @@ func protectedRun(f fs.FS, run Runnable, logger *slog.Logger, opts options) erro
 		}
 		defer nc.Close()
 
-		identity := log.WhoAmI()
 		lockFactory, err := singleton.NewLockFactory[any](
 			nc,
-			identity.InstanceID,
+			id,
 			singleton.WithLogger(logger),
 		)
 		if err != nil {
@@ -171,7 +187,7 @@ func protectedRun(f fs.FS, run Runnable, logger *slog.Logger, opts options) erro
 		// Acquire lock before proceeding.
 		// Use the same context as the task manager so that
 		// the ossignal task can gracefully cancel this.
-		lock, err := lockFactory.CreateLock(tm.Context(), identity.ServiceName, nil)
+		lock, err := lockFactory.CreateLock(tm.Context(), name, nil)
 		if err != nil {
 			if errors.Is(err, tm.Context().Err()) {
 				return nil

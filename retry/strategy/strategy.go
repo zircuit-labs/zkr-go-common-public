@@ -1,6 +1,11 @@
 package strategy
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var ErrInvalidInitialDelay = errors.New("initial delay must be greater than 0")
 
 // Strategy abstracts how each delay is determined.
 type Strategy interface {

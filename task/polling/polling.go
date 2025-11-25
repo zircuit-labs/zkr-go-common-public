@@ -14,33 +14,6 @@ const (
 	defaultPollInterval = time.Minute
 )
 
-// Ticker mimics time.Ticker but can be replaced for testing purposes
-type Ticker interface {
-	Stop()
-	Chan() <-chan time.Time
-	Tick() // for use only in testing
-}
-
-type tickerWrapper struct {
-	t *time.Ticker
-}
-
-func (t *tickerWrapper) Tick() {
-	// not supported for a real ticker
-}
-
-func (t *tickerWrapper) Stop() {
-	t.t.Stop()
-}
-
-func (t *tickerWrapper) Chan() <-chan time.Time {
-	return t.t.C
-}
-
-func defaultTicker(d time.Duration) *tickerWrapper {
-	return &tickerWrapper{t: time.NewTicker(d)}
-}
-
 // Action defines the interface for an action to be periodically run.
 type Action interface {
 	// Run is the polling action.
@@ -60,7 +33,6 @@ type Task struct {
 }
 
 type options struct {
-	testTicker       Ticker
 	pollingInterval  time.Duration
 	runAtStart       bool
 	terminateOnError bool
@@ -78,8 +50,12 @@ func WithLogger(logger *slog.Logger) Option {
 }
 
 // WithInterval sets the polling action interval.
+// If the duration is less than or equal to zero, the option will be ignored
 func WithInterval(d time.Duration) Option {
 	return func(options *options) {
+		if d <= 0 {
+			return
+		}
 		options.pollingInterval = d
 	}
 }
@@ -100,19 +76,10 @@ func WithTerminateOnError() Option {
 	}
 }
 
-// WithTestTicker replaces the underlying ticker mechanism.
-// This should only be used for testing purposes.
-func WithTestTicker(t Ticker) Option {
-	return func(options *options) {
-		options.testTicker = t
-	}
-}
-
 // NewTask creates a new PollingTask.
 func NewTask(name string, action Action, opts ...Option) *Task {
 	// Set up default options
 	options := options{
-		testTicker:       nil,
 		pollingInterval:  defaultPollInterval,
 		runAtStart:       false,
 		terminateOnError: false,
@@ -141,12 +108,7 @@ func (t *Task) Name() string {
 func (t *Task) Run(ctx context.Context) error {
 	defer t.action.Cleanup()
 
-	var ticker Ticker
-	if t.opts.testTicker != nil {
-		ticker = t.opts.testTicker
-	} else {
-		ticker = defaultTicker(t.opts.pollingInterval)
-	}
+	ticker := time.NewTicker(t.opts.pollingInterval)
 	defer ticker.Stop()
 
 	if t.opts.runAtStart {
@@ -159,7 +121,7 @@ func (t *Task) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.Chan():
+		case <-ticker.C:
 			if err := t.executeAction(ctx); err != nil {
 				return err
 			}

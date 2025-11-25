@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jonboulle/clockwork"
+
 	"github.com/zircuit-labs/zkr-go-common/calm"
 	"github.com/zircuit-labs/zkr-go-common/retry/strategy"
 	"github.com/zircuit-labs/zkr-go-common/xerrors"
@@ -69,10 +70,14 @@ type Retrier struct {
 }
 
 // NewRetrier creates a new Retrier which provides identical functionality for each use.
-func NewRetrier(opts ...Option) *Retrier {
+func NewRetrier(opts ...Option) (*Retrier, error) {
 	// Set up default options
+	defaultStrategy, err := strategy.NewExponential(time.Second*5, time.Minute)
+	if err != nil {
+		return nil, stacktrace.Wrap(err)
+	}
 	options := options{
-		getStrategy:    strategy.NewExponential(time.Second*5, time.Minute),
+		getStrategy:    defaultStrategy,
 		clock:          clockwork.NewRealClock(),
 		treatUnknownAs: errclass.Transient,
 	}
@@ -84,7 +89,7 @@ func NewRetrier(opts ...Option) *Retrier {
 
 	return &Retrier{
 		opts: options,
-	}
+	}, nil
 }
 
 // Stats provides information on why and how a retry ultimately failed.

@@ -1,6 +1,7 @@
 package strategy_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ func TestExponential(t *testing.T) {
 		maxDelay             int
 		base                 int
 		expectedOutputDelays []int
+		expectedError        error
 	}{
 		{
 			testName:             "base 2: one second initial, max nine",
@@ -45,6 +47,16 @@ func TestExponential(t *testing.T) {
 			base:                 4, // Base 4 for 1, 4, 16, 64, 100, 100, 100
 			expectedOutputDelays: []int{1, 4, 16, 64, 100, 100, 100},
 		},
+		{
+			testName:      "zero seconds",
+			initialDelay:  0,
+			expectedError: strategy.ErrInvalidInitialDelay,
+		},
+		{
+			testName:      "negative seconds",
+			initialDelay:  -100,
+			expectedError: strategy.ErrInvalidInitialDelay,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -53,10 +65,18 @@ func TestExponential(t *testing.T) {
 
 			initial := time.Duration(tc.initialDelay) * time.Second
 			mx := time.Duration(tc.maxDelay) * time.Second
-			factory := strategy.NewExponential(initial, mx, strategy.WithBase(tc.base), strategy.WithoutJitter())
+			factory, err := strategy.NewExponential(initial, mx, strategy.WithBase(tc.base), strategy.WithoutJitter())
+			if tc.expectedError != nil {
+				if err == nil || !errors.Is(err, tc.expectedError) {
+					t.Fatalf("expected error of type: %v, got %v", tc.expectedError, err)
+				}
+				return
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
 			// Ensure the factory produces the same strategy by doing the test multiple times
-			for i := 0; i < 3; i++ {
+			for range 3 {
 				s := factory()
 
 				// Verify the pattern of the delay values

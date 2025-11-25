@@ -1,7 +1,10 @@
 // Package xerrors provides a generic implementation of error wrapping, allowing any data type to be captured alongside an error.
 package xerrors
 
-import "errors"
+import (
+	"errors"
+	"log/slog"
+)
 
 // ExtendedError is a custom error type that contains additional data using generics.
 type ExtendedError[T any] struct {
@@ -17,6 +20,16 @@ func (e ExtendedError[T]) Error() string {
 // Unwrap returns the underlying wrapped error.
 func (e ExtendedError[T]) Unwrap() error {
 	return e.err
+}
+
+// LogValue implements slog.LogValuer for ExtendedError.
+// It returns the extended data. The error message is handled at a higher level to avoid redundancy.
+func (e ExtendedError[T]) LogValue() slog.Value {
+	// Check if the data itself implements LogValuer
+	if logValuer, ok := any(e.Data).(slog.LogValuer); ok {
+		return logValuer.LogValue()
+	}
+	return slog.AnyValue(e.Data)
 }
 
 // Extend creates an ExtendedError wrapping an original error with additional data.
@@ -43,5 +56,35 @@ func Unjoin(err error) []error {
 	if joinedErrs, ok := err.(interface{ Unwrap() []error }); ok {
 		return joinedErrs.Unwrap()
 	}
+	return []error{err}
+}
+
+// Flatten recursively extracts all individual errors from a joined error tree.
+// Unlike Unjoin which returns only direct children, Flatten returns all leaf errors.
+func Flatten(err error) []error {
+	if err == nil {
+		return nil
+	}
+
+	// Check if this implements Unwrap() []error (joined error)
+	if joinedErrs, ok := err.(interface{ Unwrap() []error }); ok {
+		var allErrors []error
+		for _, e := range joinedErrs.Unwrap() {
+			// Recursively extract from nested joins
+			allErrors = append(allErrors, Flatten(e)...)
+		}
+		return allErrors
+	}
+
+	// Check if this is a wrapper that might contain a joined error
+	if unwrapped := errors.Unwrap(err); unwrapped != nil {
+		// Check if the unwrapped error is a joined error
+		if joinedErrors := Flatten(unwrapped); len(joinedErrors) > 1 {
+			// The wrapped error was a join, return its flattened errors
+			return joinedErrors
+		}
+	}
+
+	// Not a joined error, return as single item
 	return []error{err}
 }

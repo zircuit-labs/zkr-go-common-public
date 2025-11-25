@@ -2,6 +2,7 @@
 package stacktrace
 
 import (
+	"log/slog"
 	"regexp"
 	"runtime"
 	"strings"
@@ -29,6 +30,25 @@ type Frame struct {
 
 // StackTrace represents a program stack trace as a series of frames.
 type StackTrace []Frame
+
+// LogValue implements slog.LogValuer for StackTrace.
+// It returns the stack trace as an array of frame objects to match the original format.
+func (st StackTrace) LogValue() slog.Value {
+	if len(st) == 0 {
+		return slog.AnyValue([]any{})
+	}
+
+	frames := make([]any, len(st))
+	for i, frame := range st {
+		frames[i] = map[string]any{
+			"func":   frame.Function,
+			"line":   frame.LineNumber,
+			"source": frame.File,
+		}
+	}
+
+	return slog.AnyValue(frames)
+}
 
 // GetStack captures the current program stack trace.
 // skipFrames is the number of stack frames to skip, where 1 would result in GetStack itself being the first frame.

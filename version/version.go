@@ -6,20 +6,38 @@ import (
 	"time"
 )
 
-type Information struct {
-	GitCommit    string    `json:"git_commit"`
-	GitDate      string    `json:"git_date"`
-	GitBranch    string    `json:"git_branch"`
-	Version      string    `json:"version"`
-	Meta         string    `json:"meta"`
-	ProverCommit string    `json:"prover_commit"`
-	L2GethCommit string    `json:"l2geth_commit"`
-	Date         time.Time `json:"-"`
+type VersionInformation struct {
+	GitCommit string    `json:"git_commit"`
+	GitDate   int64     `json:"git_date"`
+	GitDirty  bool      `json:"git_dirty"`
+	Version   string    `json:"version"`
+	Variant   string    `json:"variant"`
+	Date      time.Time `json:"-"`
 }
 
-var Info Information
+func (v VersionInformation) Commit() string {
+	if v.GitCommit == "" || v.GitCommit == "unknown" {
+		return "unknown"
+	}
+	if v.GitDirty {
+		return v.GitCommit + "-dirty"
+	}
+	return v.GitCommit
+}
+
+func (v VersionInformation) LogValues() []any {
+	return []any{
+		"git_commit", v.Commit(),
+		"git_date", v.Date,
+		"version", v.Version,
+		"variant", v.Variant,
+	}
+}
+
+var Info VersionInformation
 
 func init() {
+	// Read the version information from the JSON file
 	file, err := os.ReadFile("/etc/version.json")
 	if err != nil {
 		return
@@ -28,13 +46,5 @@ func init() {
 	if err != nil {
 		return
 	}
-	Info.Date = parseDate(Info.GitDate)
-}
-
-func parseDate(s string) time.Time {
-	d, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		return time.Time{}
-	}
-	return d.UTC()
+	Info.Date = time.Unix(Info.GitDate, 0).UTC()
 }

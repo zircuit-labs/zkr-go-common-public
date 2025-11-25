@@ -1,0 +1,26 @@
+# ignore everything but what is listed below
+*
+
+# the code
+!go.mod
+!go.sum
+
+!/calm
+!/config
+!/collections
+!/http
+!/iter
+!/log
+!/messagebus
+!/replaceattrmore
+!/retry
+!/runner
+!/scripts
+!/singleton
+!/stores
+!/task
+!/version
+!/xerrors
+
+# linting config files
+!build/linting

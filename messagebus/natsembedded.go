@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/nats-io/nats-server/v2/server"
@@ -33,6 +34,7 @@ type natsEmbeddedServerConfig struct {
 type NatsEmbeddedServer struct {
 	ns        *server.Server
 	inProcess bool
+	wg        sync.WaitGroup
 }
 
 // NewNatsEmbeddedServer creates a NatsEmbeddedServer parsing a limited config set for server options.
@@ -53,8 +55,8 @@ func NewNatsEmbeddedServer(cfg *config.Configuration, cfgPath string) (*NatsEmbe
 		StoreDir:        natsConfig.StoreDir,
 
 		// Logging options
-		Debug: true,
-		Trace: true,
+		Debug: natsConfig.EnableLogging,
+		Trace: natsConfig.EnableLogging,
 	}
 
 	if natsConfig.LeafNodeURL != "" {
@@ -84,20 +86,24 @@ func NewNatsEmbeddedServer(cfg *config.Configuration, cfgPath string) (*NatsEmbe
 	}
 
 	// Start the server, and ensure it is ready
-	go ns.Start()
+	embeddedServer := &NatsEmbeddedServer{
+		ns:        ns,
+		inProcess: serverOpts.DontListen,
+	}
+	embeddedServer.wg.Go(embeddedServer.ns.Start)
+
 	if !ns.ReadyForConnections(time.Second * 5) {
 		ns.Shutdown()
+		ns.WaitForShutdown()
+		embeddedServer.wg.Wait()
 		return nil, stacktrace.Wrap(ErrNotReady)
 	}
 
-	return &NatsEmbeddedServer{
-		ns:        ns,
-		inProcess: serverOpts.DontListen,
-	}, nil
+	return embeddedServer, nil
 }
 
 // Name returns the name of this task for the purposes of logging.
-func (s NatsEmbeddedServer) Name() string {
+func (s *NatsEmbeddedServer) Name() string {
 	return "embedded_nats_server_" + s.ns.Name()
 }
 
@@ -121,7 +127,7 @@ func (s *NatsEmbeddedServer) Run(ctx context.Context) error {
 
 // Connection returns a new connection to the embedded server.
 // Callers are responsible for closing this connection when finished with it.
-func (s NatsEmbeddedServer) NewConnection() (*nats.Conn, error) {
+func (s *NatsEmbeddedServer) NewConnection() (*nats.Conn, error) {
 	// create a connection
 	clientOpts := []nats.Option{}
 	if s.inProcess {
@@ -140,4 +146,5 @@ func (s NatsEmbeddedServer) NewConnection() (*nats.Conn, error) {
 func (s *NatsEmbeddedServer) Close() {
 	s.ns.Shutdown()
 	s.ns.WaitForShutdown()
+	s.wg.Wait()
 }

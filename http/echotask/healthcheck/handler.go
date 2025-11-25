@@ -8,7 +8,7 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-//go:generate mockgen -source handler.go -destination mock_handler.go -package healthcheck
+//go:generate go tool mockgen -source handler.go -destination mock_handler.go -package healthcheck
 
 type (
 	GetHealthCheck struct {

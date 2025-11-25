@@ -1,6 +1,7 @@
 package strategy_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -12,18 +13,29 @@ func TestConstant(t *testing.T) {
 
 	testCases := []struct {
 		testName             string
-		inputDelay           int
+		initialDelay         int
 		expectedOutputDelays []int
+		expectedError        error
 	}{
 		{
 			testName:             "one second",
-			inputDelay:           1,
-			expectedOutputDelays: []int{1, 1, 1, 1},
+			initialDelay:         1,
+			expectedOutputDelays: []int{1, 1, 1, 1, 1},
 		},
 		{
 			testName:             "four seconds",
-			inputDelay:           4,
+			initialDelay:         4,
 			expectedOutputDelays: []int{4, 4, 4, 4, 4},
+		},
+		{
+			testName:             "zero seconds",
+			initialDelay:         0,
+			expectedOutputDelays: []int{0, 0, 0, 0, 0},
+		},
+		{
+			testName:      "negative seconds",
+			initialDelay:  -100,
+			expectedError: strategy.ErrInvalidInitialDelay,
 		},
 	}
 
@@ -32,11 +44,19 @@ func TestConstant(t *testing.T) {
 			t.Parallel()
 
 			// NewConstant creates a factory
-			initial := time.Duration(tc.inputDelay) * time.Second
-			factory := strategy.NewConstant(initial, strategy.WithoutJitter())
+			initial := time.Duration(tc.initialDelay) * time.Second
+			factory, err := strategy.NewConstant(initial, strategy.WithoutJitter())
+			if tc.expectedError != nil {
+				if err == nil || !errors.Is(err, tc.expectedError) {
+					t.Fatalf("expected error of type: %v, got %v", tc.expectedError, err)
+				}
+				return
+			} else if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
 
 			// ensure the factory produces the same strategy by doing the test multiple times
-			for i := 0; i < 3; i++ {
+			for range 3 {
 				s := factory()
 
 				// verify the pattern of the delay values

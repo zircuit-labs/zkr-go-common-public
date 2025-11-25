@@ -2,49 +2,27 @@ package log
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
-	"github.com/neilotoole/slogt"
-	"github.com/rs/xid"
-	"github.com/rs/zerolog"
-	slogcommon "github.com/samber/slog-common"
-	slogzerolog "github.com/samber/slog-zerolog/v2"
 	"github.com/zircuit-labs/zkr-go-common/version"
-	"github.com/zircuit-labs/zkr-go-common/xerrors"
-	"github.com/zircuit-labs/zkr-go-common/xerrors/errclass"
-	"github.com/zircuit-labs/zkr-go-common/xerrors/errcontext"
-	"github.com/zircuit-labs/zkr-go-common/xerrors/stacktrace"
 )
 
 const (
-	ErrorKey      = "error"
-	SourceKey     = "source"
-	StackTraceKey = "stacktrace"
-	ErrClassKey   = "class"
+	ErrorKey = "error"
 )
 
-type Identity struct {
-	ServiceName string
-	InstanceID  string
-}
+type LogStyle int
 
-func (i Identity) String() string {
-	return fmt.Sprintf("%s-%s", i.ServiceName, i.InstanceID)
-}
-
-var (
-	logLevel = &slog.LevelVar{}
-	identity = Identity{
-		ServiceName: "unknown",
-		InstanceID:  xid.New().String(),
-	}
+const (
+	LogStyleJSON = iota
+	LogStyleText
 )
 
-func WhoAmI() Identity {
-	return identity
-}
+var logLevel = &slog.LevelVar{}
 
 func SetLogLevel(level string) error {
 	if level != "" {
@@ -53,9 +31,22 @@ func SetLogLevel(level string) error {
 	return nil
 }
 
-// ErrAttr is a helper for logging error values.
+func GetLogLevel() string {
+	return strings.ToLower(logLevel.Level().String())
+}
+
+// ErrAttr is a helper for logging error values using LoggableError wrapper.
+// It wraps the error with LoggableError to enable custom logging behavior via LogValuer interface.
 func ErrAttr(err error) slog.Attr {
-	return slog.Any(ErrorKey, err)
+	if err == nil {
+		return slog.Any(ErrorKey, nil)
+	}
+	return slog.Any(ErrorKey, Loggable(err))
+}
+
+// NewNilLogger creates a logger that discards all logs.
+func NewNilLogger() *slog.Logger {
+	return slog.New(slog.DiscardHandler)
 }
 
 // NewTestLogger creates a new logger for testing.
@@ -65,160 +56,132 @@ func ErrAttr(err error) slog.Attr {
 // test has completed. This can be helpful for finding race conditions.
 func NewTestLogger(t *testing.T) *slog.Logger {
 	t.Helper()
-	log := slogt.New(t, slogt.JSON()).With(slog.String("test", t.Name()))
+	log, err := NewLogger(WithWriter(t.Output()), WithLogStyle(LogStyleJSON))
+	if err != nil {
+		t.Fatalf("NewLogger failed: %v", err)
+	}
 	return log
 }
 
-// NewLogger creates a new slog logger backed by zerolog with some standard defaults.
-func NewLogger(serviceName string) *slog.Logger {
-	// ms granularity should be sufficient
-	zerolog.TimeFieldFormat = zerolog.TimeFormatUnixMs
-	identity.ServiceName = serviceName
-
-	zlogger := zerolog.
-		New(os.Stdout).With().                      // log to stdout not stderr
-		Timestamp().                                // include timestamp
-		Str("service", identity.ServiceName).       // include the service name
-		Str("instance", identity.InstanceID).       // include unique id for instance
-		Str("git_commit", version.Info.GitCommit).  // include hash of last git commit
-		Time("git_commit_time", version.Info.Date). // include timestamp of last git commit
-		Str("git_branch", version.Info.GitBranch).  // include name of the branch when built
-		Str("version", version.Info.Version).       // include version information
-		Str("version_meta", version.Info.Meta).     // include version metadata
-		Logger()
-
-	logger := slog.New(slogzerolog.Option{
-		Converter: CustomSlogConverter,
-		Level:     logLevel,
-		Logger:    &zlogger,
-	}.NewZerologHandler())
-
-	return logger
+type options struct {
+	writer      io.Writer
+	instanceID  string
+	serviceName string
+	versionInfo *version.VersionInformation
+	logStyle    LogStyle
 }
 
-// CustomSlogConverter is a copy of slogcommon.DefaultConverter, except that the replaceError function has been swapped with our own.
-func CustomSlogConverter(addSource bool, replaceAttr func(groups []string, a slog.Attr) slog.Attr, loggerAttr []slog.Attr, groups []string, record *slog.Record) map[string]any {
-	// aggregate all attributes
-	attrs := slogcommon.AppendRecordAttrsToAttrs(loggerAttr, groups, record)
+// Option configures logger creation
+type Option func(*options)
 
-	// replace error(s)
-	attrs = replaceError(attrs)
-	if addSource {
-		attrs = append(attrs, slogcommon.Source(SourceKey, record))
+// WithWriter configures the logger to write to the specified io.Writer
+func WithWriter(w io.Writer) Option {
+	return func(opts *options) {
+		if w == nil {
+			opts.writer = io.Discard
+			return
+		}
+		opts.writer = w
 	}
-	attrs = slogcommon.ReplaceAttrs(replaceAttr, []string{}, attrs...)
-
-	// handler formatter
-	output := slogcommon.AttrsToMap(attrs...)
-
-	return output
 }
 
-/*
-replaceError looks for an "error" attribute, and if found, replaces it with the following:
-if the error is not joined:
+// WithInstanceID configures the logger to emit the instance field with every log
+func WithInstanceID(id string) Option {
+	return func(opts *options) {
+		opts.instanceID = id
+	}
+}
 
-	{
-		"error": err.Error()
-		"error_context":
-			"error": err.Error(),
-			"stacktrace": <the error stacktrace if it exists>,
-			"class": <the error class if it exists>,
-			"key": <value>, // for each key/value in the error context
+// WithServiceName configures the logger to emit the service field with every log
+func WithServiceName(name string) Option {
+	return func(opts *options) {
+		opts.serviceName = name
+	}
+}
+
+// WithVersion configures the logger to emit the version information with every log
+func WithVersion(versionInfo *version.VersionInformation) Option {
+	return func(opts *options) {
+		opts.versionInfo = versionInfo
+	}
+}
+
+// WithLogStyle configures the logger to use the given supported style of logging
+// Ideally this would allow for any slog.Handler however that is not possible at this time
+func WithLogStyle(logStyle LogStyle) Option {
+	return func(opts *options) {
+		opts.logStyle = logStyle
+	}
+}
+
+// NewLogger creates a new logger using replaceattrmore.Handler chained with slog.JSONHandler.
+// This approach leverages all of slog's built-in functionality while providing custom
+// LoggableError flattening. Use ErrAttr() when logging errors with this logger.
+func NewLogger(opts ...Option) (*slog.Logger, error) {
+	// Parse cfg
+	cfg := options{
+		writer:   os.Stdout,
+		logStyle: LogStyleJSON,
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
+	// Create base log handler with lowercase level formatting and key sanitization as required
+	logHandler, err := formatHandler(cfg.logStyle, cfg.writer)
+	if err != nil {
+		return nil, err
+	}
+
+	// Chain with loggable error handler for error flattening
+	handler := NewLoggableErrorHandler(logHandler)
+
+	// Add Optional Attributes
+	attrs := []slog.Attr{}
+	if cfg.serviceName != "" {
+		attrs = append(attrs, slog.String("service", cfg.serviceName))
+	}
+	if cfg.instanceID != "" {
+		attrs = append(attrs, slog.String("instance", cfg.instanceID))
+	}
+	if cfg.versionInfo != nil {
+		if c := cfg.versionInfo.Commit(); c != "" {
+			attrs = append(attrs, slog.String("git_commit", c))
+		}
+		if !cfg.versionInfo.Date.IsZero() {
+			attrs = append(attrs, slog.Time("git_commit_time", cfg.versionInfo.Date))
+		}
+		if v := cfg.versionInfo.Version; v != "" {
+			attrs = append(attrs, slog.String("version", v))
+		}
+	}
+
+	return slog.New(handler.WithAttrs(attrs)), nil
+}
+
+func formatHandler(logStyle LogStyle, writer io.Writer) (slog.Handler, error) {
+	handlerOptions := &slog.HandlerOptions{
+		Level: logLevel,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			// Convert level to lowercase to match our expected format
+			if a.Key == slog.LevelKey {
+				if lvl, ok := a.Value.Any().(slog.Level); ok {
+					a.Value = slog.StringValue(strings.ToLower(lvl.String()))
+				} else {
+					// Fallback if another handler set a string or other kind
+					a.Value = slog.StringValue(strings.ToLower(a.Value.String()))
+				}
+			}
+			return a
 		},
 	}
 
-if the error is joined:
-
-	{
-		"error": [err.Error(), err.Error(), ...]
-		"error_context": [
-			"error_0": {
-				"error": err.Error(),
-				"stacktrace": <the error stacktrace if it exists>,
-				"class": <the error class if it exists>,
-				"key": <value>, // for each key/value in the error context
-			},
-			"error_1": {
-				"error": err.Error(),
-				"stacktrace": <the error stacktrace if it exists>,
-				"class": <the error class if it exists>,
-				"key": <value>, // for each key/value in the error context
-			},
-			...
-		]
+	switch logStyle {
+	case LogStyleJSON:
+		return slog.NewJSONHandler(writer, handlerOptions), nil
+	case LogStyleText:
+		return slog.NewTextHandler(writer, handlerOptions), nil
+	default:
+		return nil, fmt.Errorf("unsupported log style option: %v", logStyle)
 	}
-
-	See the tests for detailed examples.
-*/
-func replaceError(attrs []slog.Attr) []slog.Attr {
-	var groupedAttrs [][]any
-	replaceAttr := func(groups []string, a slog.Attr) slog.Attr {
-		if len(groups) > 1 {
-			return a
-		}
-
-		if a.Key != ErrorKey {
-			return a
-		}
-
-		err, ok := a.Value.Any().(error)
-		if !ok || err == nil {
-			return a
-		}
-
-		joinedErrs := xerrors.Unjoin(err)
-		groupedAttrs = make([][]any, len(joinedErrs))
-		errorStrings := make([]string, 0, len(joinedErrs))
-		for i, joinedErr := range joinedErrs {
-
-			groupedAttrs[i] = append(groupedAttrs[i], slog.String(ErrorKey, joinedErr.Error()))
-			errorStrings = append(errorStrings, joinedErr.Error())
-
-			// add a stacktrace if found
-			if trace := stacktrace.StackTraceMarshaler(joinedErr); trace != nil {
-				groupedAttrs[i] = append(groupedAttrs[i], slog.Any(StackTraceKey, trace))
-			}
-
-			// add an error class if found
-			if class := errclass.GetClass(joinedErr); class != errclass.Unknown {
-				groupedAttrs[i] = append(groupedAttrs[i], slog.String(ErrClassKey, class.String()))
-			}
-
-			// add any additional context
-			for _, attr := range errcontext.Get(joinedErr) {
-				groupedAttrs[i] = append(groupedAttrs[i], attr)
-			}
-		}
-
-		if len(joinedErrs) == 1 {
-			return slog.String(ErrorKey, err.Error())
-		}
-
-		return slog.Any(a.Key, errorStrings)
-	}
-	results := append(attrs, slogcommon.ReplaceAttrs(replaceAttr, []string{}, attrs...)...)
-
-	if len(groupedAttrs) == 0 {
-		return results
-	}
-
-	if len(groupedAttrs) == 1 {
-		if len(groupedAttrs[0]) > 1 {
-			results = append(results, slog.Group("error_context", groupedAttrs[0]...))
-		}
-		return results
-	}
-
-	groups := make([]slog.Attr, len(groupedAttrs))
-	for i, group := range groupedAttrs {
-		groupName := fmt.Sprintf("error_%d", i)
-		groups[i] = slog.Group(groupName, group...)
-	}
-
-	if len(groupedAttrs) > 0 {
-		results = append(results, slog.Any("error_context", groups))
-	}
-
-	return results
 }

@@ -1,0 +1,2 @@
+This is not a JSON file.
+It should not be parsed as such.

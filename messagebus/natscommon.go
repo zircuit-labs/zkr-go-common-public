@@ -9,6 +9,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
+
 	"github.com/zircuit-labs/zkr-go-common/config"
 	"github.com/zircuit-labs/zkr-go-common/log"
 	"github.com/zircuit-labs/zkr-go-common/retry"
@@ -42,8 +43,10 @@ func NewNatsConnection(cfg *config.Configuration, opts ...Option) (*nats.Conn, e
 	}
 
 	// Update value from config
-	if err := cfg.Unmarshal(options.natsConnectionConfigPath, &natsConfig); err != nil {
-		return nil, stacktrace.Wrap(err)
+	if cfg != nil {
+		if err := cfg.Unmarshal(options.natsConnectionConfigPath, &natsConfig); err != nil {
+			return nil, stacktrace.Wrap(err)
+		}
 	}
 
 	// prepare connection options
@@ -107,11 +110,12 @@ type options struct {
 
 func parseOptions(opts []Option) options {
 	// Set up default options
+	defaultRetrier, _ := retry.NewRetrier(retry.WithMaxAttempts(10))
 	options := options{
 		logger:                   log.NewNilLogger(),
 		marshaler:                json.Marshal,
 		unmarshaler:              json.Unmarshal,
-		retrier:                  retry.NewRetrier(retry.WithMaxAttempts(10)),
+		retrier:                  defaultRetrier,
 		inProgressInterval:       defaultInProgressInterval,
 		consumerConfig:           nil,
 		nc:                       nil,
