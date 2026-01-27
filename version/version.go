@@ -25,6 +25,16 @@ func (v VersionInformation) Commit() string {
 	return v.GitCommit
 }
 
+func (v VersionInformation) ShortCommit() string {
+	if v.GitCommit == "" || v.GitCommit == "unknown" {
+		return "unknown"
+	}
+	if len(v.GitCommit) > 7 {
+		return v.GitCommit[:7]
+	}
+	return v.GitCommit
+}
+
 func (v VersionInformation) LogValues() []any {
 	return []any{
 		"git_commit", v.Commit(),
@@ -32,6 +42,20 @@ func (v VersionInformation) LogValues() []any {
 		"version", v.Version,
 		"variant", v.Variant,
 	}
+}
+
+func (v VersionInformation) VersionCommit() string {
+	if v.Version == "" || v.Version == "unknown" {
+		return "unknown"
+	}
+	vc := v.Version
+	if c := v.ShortCommit(); c != "" && c != "unknown" {
+		vc = vc + "-" + c
+	}
+	if r := v.Variant; r != "" {
+		vc = vc + "-" + r
+	}
+	return vc
 }
 
 var Info VersionInformation

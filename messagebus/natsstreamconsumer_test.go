@@ -75,7 +75,16 @@ func (suite *NatsConsumerSuite) SetupSuite() {
 	suite.Require().NoError(err)
 	suite.container = container
 
-	nc, err := nats.Connect(suite.natsURL, nats.ReconnectWait(1*time.Second), nats.MaxReconnects(10))
+	// Retry connection since NATS might not be fully ready even after port is available
+	// (especially when running with -race flag which adds overhead)
+	var nc *nats.Conn
+	for i := 0; i < 10; i++ {
+		nc, err = nats.Connect(suite.natsURL, nats.ReconnectWait(1*time.Second), nats.MaxReconnects(10))
+		if err == nil {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 	suite.Require().NoError(err)
 
 	suite.nc = nc
